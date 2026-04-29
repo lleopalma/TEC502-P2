@@ -1,0 +1,14 @@
+services:
+  sensor-temp:
+    build: ./
+    command: python -u sensor_temp.py
+    container_name: "sensor-temp"
+    environment:
+      SERVER_HOST: ${SERVER_HOST:-servidor}
+
+  sensor-umid:
+    build: ./
+    command: python -u sensor_umid.py
+    container_name: "sensor-umid"
+    environment:
+      SERVER_HOST: ${SERVER_HOST:-servidor}

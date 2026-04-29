@@ -1,0 +1,8 @@
+services:
+  servidor:
+    build: ./
+    container_name: iot_server
+    ports:
+      - "12345:12345/tcp"
+      - "12346:12346/udp"
+      - "12347:12347/udp"

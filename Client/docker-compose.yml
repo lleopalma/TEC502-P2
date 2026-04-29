@@ -1,0 +1,9 @@
+services:
+  operador:
+    build: ./
+    command: python -u client.py
+    container_name: "operador"
+    stdin_open: true
+    tty: true
+    environment:
+      SERVER_HOST: ${SERVER_HOST}

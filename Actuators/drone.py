@@ -16,6 +16,7 @@ HEARTBEAT_INTERVAL = 2  # Intervalo do heartbeat em segundos
 
 
 def enviar(s, **campos):
+    """Envia uma mensagem JSON ao Broker"""
     mensagem = json.dumps(campos, ensure_ascii=False) + "\n"
     s.sendall(mensagem.encode("utf-8"))
 
@@ -32,6 +33,7 @@ def ler_linha(s, buffer):
 
 
 def conectar():
+    """Tenta conectar ao servidor, retornando o socket conectado."""
     while True:
         try:
             print(f"Tentando conectar ao servidor {HOST}:{PORT}...")
@@ -44,15 +46,11 @@ def conectar():
             time.sleep(RETRY_INTERVAL)
 
 
-def enviar_heartbeat(s):
-    enviar(s, tipo="heartbeat", dispositivo="drone", drone_id=DRONE_ID)
-
-
-def heartbeat_loop(sock, stop_event):
+def enviar_heartbeat(s, stop_event):
     """Envia heartbeat a cada 2 segundos até o evento ser definido."""
     while not stop_event.is_set():
         try:
-            enviar_heartbeat(sock)
+            enviar(s, tipo="heartbeat", dispositivo="drone", drone_id=DRONE_ID)
             print("Heartbeat enviado")
         except Exception as e:
             print(f"Erro ao enviar heartbeat: {e}")
@@ -61,6 +59,7 @@ def heartbeat_loop(sock, stop_event):
 
 
 def executar_missao(sock, req_id):
+    """Simula a execução de uma missão, enviando status e conclusão."""
     duracao = random.randint(5, 15)  # segundos
     print(f"Missão {req_id} iniciada. Duração estimada: {duracao}s")
     time.sleep(duracao)
@@ -84,10 +83,11 @@ while True:
         print("Aguardando comandos...\n")
 
         # Iniciar thread de heartbeat
-        heartbeat_thread = threading.Thread(target=heartbeat_loop, args=(s, stop_event))
+        heartbeat_thread = threading.Thread(target=enviar_heartbeat, args=(s, stop_event))
         heartbeat_thread.daemon = True
         heartbeat_thread.start()
 
+        # Tratar comandos do servidor
         while True:
             chunk = s.recv(1024).decode("utf-8")
             if not chunk:

@@ -5,13 +5,11 @@ import time
 
 # Listas separadas por tipo de cliente TCP
 operadores     = []
-ventiladores   = []
-umidificadores = []
+drones         = []
 
 # Portas
 TCP_PORT      = 12345
-UDP_TEMP_PORT = 12346
-UDP_UMID_PORT = 12347
+UDP_PORT = 12346
 HOST          = "0.0.0.0"
 
 # Limiares
@@ -27,8 +25,7 @@ override_ventilador   = False
 override_umidificador = False
 
 op_lock       = threading.Lock()
-vent_lock     = threading.Lock()
-umid_lock     = threading.Lock()
+drone_lock    = threading.Lock()
 override_lock = threading.Lock()
 
 # Lock dedicado para ultimo_cmd (protege leitura+escrita atômica)
@@ -78,7 +75,7 @@ def notificar_sensor_com_rate_limit(dispositivo, **campos):
 
 # Lógica da temperatura
 
-def processar_temperatura(valor, endereco):
+def processar_radar(valor, endereco):
     global ultimo_cmd_temp
 
     print(f"Sensor temperatura {endereco}: {valor}°C")
@@ -135,7 +132,7 @@ def processar_temperatura(valor, endereco):
 
 # Lógica da umidade
 
-def processar_umidade(valor, endereco):
+def processar_boia(valor, endereco):
     global ultimo_cmd_umid
 
     print(f"Sensor umidade {endereco}: {valor}%")
@@ -222,21 +219,12 @@ def handle_client(client_socket, address):
 
     dispositivo = dados.get("dispositivo", "").lower()
 
-    if dispositivo == "ventilador":
-        with vent_lock:
-            ventiladores.append(client_socket)
-        print(f"Conexão: ventilador registrado {address}")
+    if dispositivo == "drone":
+        with drone_lock:
+            drones.append(client_socket)
+        print(f"Conexão: drone {dados.get("drone_id", "")} registrado {address}")
         client_socket.sendall(montar_mensagem(
-            tipo="confirmacao", mensagem="Registrado como VENTILADOR"
-        ))
-        loop_atuador(client_socket, address, dispositivo, buffer_restante)
-
-    elif dispositivo == "umidificador":
-        with umid_lock:
-            umidificadores.append(client_socket)
-        print(f"Conexão: umidificador registrado {address}")
-        client_socket.sendall(montar_mensagem(
-            tipo="confirmacao", mensagem="Registrado como UMIDIFICADOR"
+            tipo="confirmacao", mensagem="Registrado como DRONE"
         ))
         loop_atuador(client_socket, address, dispositivo, buffer_restante)
 
@@ -424,47 +412,34 @@ def tcp_server():
             t.start()
 
 
-def udp_temp_server():
+def udp_server():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.bind((HOST, UDP_TEMP_PORT))
-        print(f"Servidor UDP temperatura pronto na porta {UDP_TEMP_PORT}")
+        udp.bind((HOST, UDP_PORT))
+        print(f"Servidor UDP pronto na porta {UDP_PORT}")
 
         while True:
             data, address = udp.recvfrom(2048)
             try:
                 dados = json.loads(data.decode("utf-8"))
-                if dados.get("tipo") != "sensor" or dados.get("dispositivo") != "temperatura":
-                    print(f"Mensagem inválida do sensor de temperatura: {dados}")
+                if dados.get("tipo") != "sensor":
+                    print(f"Mensagem inválida do sensor: {dados}")
                     continue
-                valor = int(dados["valor"])
-                processar_temperatura(valor, address)
+                
+                if dados.get("dispositivo") == "radar":
+                    processar_radar()
+                elif dados.get("dispositivo") == "boia":
+                    processar_boia()
+                else:
+                    print(f"Mensagem inválida do sensor: {dados}")
+                    continue
             except Exception as e:
                 print(f"Mensagem inválida do sensor de temperatura: {e}")
 
 
-def udp_umid_server():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.bind((HOST, UDP_UMID_PORT))
-        print(f"Servidor UDP umidade pronto na porta {UDP_UMID_PORT}")
-
-        while True:
-            data, address = udp.recvfrom(2048)
-            try:
-                dados = json.loads(data.decode("utf-8"))
-                if dados.get("tipo") != "sensor" or dados.get("dispositivo") != "umidade":
-                    print(f"Mensagem inválida do sensor de umidade: {dados}")
-                    continue
-                valor = int(dados["valor"])
-                processar_umidade(valor, address)
-            except Exception as e:
-                print(f"Mensagem inválida do sensor de umidade: {e}")
-
-
 def main():
     threads = [
-        threading.Thread(target=tcp_server,      daemon=True),
-        threading.Thread(target=udp_temp_server, daemon=True),
-        threading.Thread(target=udp_umid_server, daemon=True),
+        threading.Thread(target=tcp_server, daemon=True),
+        threading.Thread(target=udp_server, daemon=True),
     ]
     for t in threads:
         t.start()

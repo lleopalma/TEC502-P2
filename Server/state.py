@@ -1,0 +1,89 @@
+import os
+import threading
+import time
+
+"""
+state.py — Estado global compartilhado
+=======================================
+Relógio de Lamport + Ricart-Agrawala para exclusão mútua distribuída.
+Cada broker solicita acesso à seção crítica com um timestamp lógico.
+"""
+
+# ──────────────────────────────────────────────
+# Configuração
+# ──────────────────────────────────────────────
+
+BROKER_ID      = os.environ.get("BROKER_ID", "A")
+BROKER_PORT    = int(os.environ.get("BROKER_PORT", "5000"))
+UDP_PORT       = int(os.environ.get("UDP_PORT", "12346"))
+DRONE_TIMEOUT  = float(os.environ.get("DRONE_TIMEOUT", "10"))
+OK_TIMEOUT     = float(os.environ.get("OK_TIMEOUT", "5"))   # timeout para receber OK de um peer
+HOST           = "0.0.0.0"
+
+
+def parse_peers(env: str) -> dict:
+    peers = {}
+    for entry in env.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        partes = entry.split(":")
+        if len(partes) != 3:
+            continue
+        pid, host, port = partes
+        peers[pid] = (host, int(port))
+    return peers
+
+
+PEERS = parse_peers(os.environ.get("PEERS", ""))
+TODOS = sorted([BROKER_ID] + list(PEERS.keys()))  # lista fixa de todos os brokers
+
+# ──────────────────────────────────────────────
+# Relógio de Lamport
+# ──────────────────────────────────────────────
+
+lamport       = 0
+lamport_lock  = threading.Lock()
+
+
+def lamport_tick() -> int:
+    """Incrementa e retorna o relógio de Lamport."""
+    global lamport
+    with lamport_lock:
+        lamport += 1
+        return lamport
+
+
+def lamport_update(ts_recebido: int) -> int:
+    """Atualiza o relógio ao receber mensagem: max(local, recebido) + 1."""
+    global lamport
+    with lamport_lock:
+        lamport = max(lamport, ts_recebido) + 1
+        return lamport
+
+# ──────────────────────────────────────────────
+# Estado da exclusão mútua (Ricart-Agrawala)
+# ──────────────────────────────────────────────
+
+# Estados possíveis: "RELEASED", "WANTED", "HELD"
+em_estado      = "RELEASED"
+em_lock        = threading.Lock()
+
+meu_timestamp  = 0          # timestamp do meu REQUEST atual
+oks_recebidos  = set()      # peers que já responderam OK
+fila_pendente  = []         # peers aguardando meu OK (para quando eu sair da SC)
+em_cond        = threading.Condition(em_lock)  # para acordar quando todos OKs chegarem
+
+# ──────────────────────────────────────────────
+# Estado dos drones
+# ──────────────────────────────────────────────
+
+drones     = {}
+drone_lock = threading.Lock()
+
+# ──────────────────────────────────────────────
+# Fila de requisições
+# ──────────────────────────────────────────────
+
+fila_reqs = []
+fila_lock = threading.Lock()

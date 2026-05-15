@@ -18,8 +18,8 @@ print(f"Boia {BOIA_ID} iniciada. Enviando para {HOST}:{PORT} a cada 3s\n")
 
 while True:
     try:
-        # 90% do tempo normal, 10% de chance de detectar embarcação à deriva
-        deriva = 1 if random.random() < 0.10 else 0
+        # 97% do tempo normal, 3% de chance de detectar embarcação à deriva
+        deriva = 1 if random.random() < 0.03 else 0
 
         mensagem = json.dumps({
             "tipo":        "sensor",
@@ -34,7 +34,7 @@ while True:
         status = "ALERTA: embarcação à deriva!" if deriva else "normal"
         print(f"Boia [{BOIA_ID}]: {status}")
 
-        time.sleep(3)
+        time.sleep(5)
 
     except KeyboardInterrupt:
         print(f"\nBoia {BOIA_ID} encerrada.")

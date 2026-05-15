@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY server.py .
-EXPOSE 12345/tcp 12346/udp 12347/udp
-CMD ["python", "-u", "server.py"]
+COPY broker.py .
+COPY state.py .
+COPY tcp_server.py .
+COPY udp_server.py .
+CMD ["python", "-u", "broker.py"]

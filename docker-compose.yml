@@ -1,0 +1,325 @@
+services:
+
+  # ────────────────────────────────────────────
+  # BROKERS (4 setores)
+  # ────────────────────────────────────────────
+
+  broker-a:
+    build: ./Server
+    container_name: broker-a
+    environment:
+      BROKER_ID: "A"
+      BROKER_PORT: "5000"
+      UDP_PORT: "12346"
+      PEERS: "B:broker-b:5000,C:broker-c:5000,D:broker-d:5000"
+      TOKEN_TIMEOUT: "300"
+      DRONE_TIMEOUT: "10"
+    ports:
+      - "5000:5000"
+      - "12346:12346/udp"
+    networks:
+      - ormuz
+
+  broker-b:
+    build: ./Server
+    container_name: broker-b
+    environment:
+      BROKER_ID: "B"
+      BROKER_PORT: "5000"
+      UDP_PORT: "12346"
+      PEERS: "A:broker-a:5000,C:broker-c:5000,D:broker-d:5000"
+      TOKEN_TIMEOUT: "300"
+      DRONE_TIMEOUT: "10"
+    ports:
+      - "5001:5000"
+      - "12347:12346/udp"
+    networks:
+      - ormuz
+
+  broker-c:
+    build: ./Server
+    container_name: broker-c
+    environment:
+      BROKER_ID: "C"
+      BROKER_PORT: "5000"
+      UDP_PORT: "12346"
+      PEERS: "A:broker-a:5000,B:broker-b:5000,D:broker-d:5000"
+      TOKEN_TIMEOUT: "300"
+      DRONE_TIMEOUT: "10"
+    ports:
+      - "5002:5000"
+      - "12348:12346/udp"
+    networks:
+      - ormuz
+
+  broker-d:
+    build: ./Server
+    container_name: broker-d
+    environment:
+      BROKER_ID: "D"
+      BROKER_PORT: "5000"
+      UDP_PORT: "12346"
+      PEERS: "A:broker-a:5000,B:broker-b:5000,C:broker-c:5000"
+      TOKEN_TIMEOUT: "300"
+      DRONE_TIMEOUT: "10"
+    ports:
+      - "5003:5000"
+      - "12349:12346/udp"
+    networks:
+      - ormuz
+
+  # ────────────────────────────────────────────
+  # DRONES (8 no total, 2 por setor)
+  # ────────────────────────────────────────────
+
+  drone-a1:
+    build: ./Actuators
+    container_name: drone-a1
+    environment:
+      SERVER_HOST: broker-a
+      PORT: "5000"
+    depends_on:
+      - broker-a
+    networks:
+      - ormuz
+
+  drone-a2:
+    build: ./Actuators
+    container_name: drone-a2
+    environment:
+      SERVER_HOST: broker-a
+      PORT: "5000"
+    depends_on:
+      - broker-a
+    networks:
+      - ormuz
+
+  drone-b1:
+    build: ./Actuators
+    container_name: drone-b1
+    environment:
+      SERVER_HOST: broker-b
+      PORT: "5000"
+    depends_on:
+      - broker-b
+    networks:
+      - ormuz
+
+  drone-b2:
+    build: ./Actuators
+    container_name: drone-b2
+    environment:
+      SERVER_HOST: broker-b
+      PORT: "5000"
+    depends_on:
+      - broker-b
+    networks:
+      - ormuz
+
+  drone-c1:
+    build: ./Actuators
+    container_name: drone-c1
+    environment:
+      SERVER_HOST: broker-c
+      PORT: "5000"
+    depends_on:
+      - broker-c
+    networks:
+      - ormuz
+
+  drone-c2:
+    build: ./Actuators
+    container_name: drone-c2
+    environment:
+      SERVER_HOST: broker-c
+      PORT: "5000"
+    depends_on:
+      - broker-c
+    networks:
+      - ormuz
+
+  drone-d1:
+    build: ./Actuators
+    container_name: drone-d1
+    environment:
+      SERVER_HOST: broker-d
+      PORT: "5000"
+    depends_on:
+      - broker-d
+    networks:
+      - ormuz
+
+  drone-d2:
+    build: ./Actuators
+    container_name: drone-d2
+    environment:
+      SERVER_HOST: broker-d
+      PORT: "5000"
+    depends_on:
+      - broker-d
+    networks:
+      - ormuz
+
+  # ────────────────────────────────────────────
+  # SENSORES — Radares (1 por setor)
+  # ────────────────────────────────────────────
+
+  radar-a:
+    build: ./Sensors
+    container_name: radar-a
+    command: python -u sensor_radar.py
+    environment:
+      BROKER_HOST: broker-a
+      BROKER_PORT: "12346"
+      ZONA: "setor-a"
+    depends_on:
+      - broker-a
+    networks:
+      - ormuz
+
+  radar-b:
+    build: ./Sensors
+    container_name: radar-b
+    command: python -u sensor_radar.py
+    environment:
+      BROKER_HOST: broker-b
+      BROKER_PORT: "12346"
+      ZONA: "setor-b"
+    depends_on:
+      - broker-b
+    networks:
+      - ormuz
+
+  radar-c:
+    build: ./Sensors
+    container_name: radar-c
+    command: python -u sensor_radar.py
+    environment:
+      BROKER_HOST: broker-c
+      BROKER_PORT: "12346"
+      ZONA: "setor-c"
+    depends_on:
+      - broker-c
+    networks:
+      - ormuz
+
+  radar-d:
+    build: ./Sensors
+    container_name: radar-d
+    command: python -u sensor_radar.py
+    environment:
+      BROKER_HOST: broker-d
+      BROKER_PORT: "12346"
+      ZONA: "setor-d"
+    depends_on:
+      - broker-d
+    networks:
+      - ormuz
+
+  # ────────────────────────────────────────────
+  # SENSORES — Boias (2 por setor)
+  # ────────────────────────────────────────────
+
+  boia-a1:
+    build: ./Sensors
+    container_name: boia-a1
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-a
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-a
+    networks:
+      - ormuz
+
+  boia-a2:
+    build: ./Sensors
+    container_name: boia-a2
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-a
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-a
+    networks:
+      - ormuz
+
+  boia-b1:
+    build: ./Sensors
+    container_name: boia-b1
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-b
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-b
+    networks:
+      - ormuz
+
+  boia-b2:
+    build: ./Sensors
+    container_name: boia-b2
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-b
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-b
+    networks:
+      - ormuz
+
+  boia-c1:
+    build: ./Sensors
+    container_name: boia-c1
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-c
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-c
+    networks:
+      - ormuz
+
+  boia-c2:
+    build: ./Sensors
+    container_name: boia-c2
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-c
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-c
+    networks:
+      - ormuz
+
+  boia-d1:
+    build: ./Sensors
+    container_name: boia-d1
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-d
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-d
+    networks:
+      - ormuz
+
+  boia-d2:
+    build: ./Sensors
+    container_name: boia-d2
+    command: python -u sensor_boia.py
+    environment:
+      BROKER_HOST: broker-d
+      BROKER_PORT: "12346"
+    depends_on:
+      - broker-d
+    networks:
+      - ormuz
+
+# ────────────────────────────────────────────
+# REDE
+# ────────────────────────────────────────────
+
+networks:
+  ormuz:
+    driver: bridge

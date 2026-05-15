@@ -9,12 +9,12 @@ import os
 # Valor: 0-100 (percentual de obstrução da rota)
 
 HOST = os.environ.get("BROKER_HOST", "broker-a")
-PORT = 12346
+PORT = 12347
 ZONA = os.environ.get("ZONA", "zona-desconhecida")
 
 sensor_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-print(f"Radar iniciado. Enviando para {HOST}:{PORT} a cada 2s\n")
+print(f"Radar iniciado. Enviando para {HOST}:{PORT} a cada 5s\n")
 
 # Risco começa baixo e varia gradualmente — simula situação real
 risco_atual = random.randint(10, 30)
@@ -27,7 +27,7 @@ while True:
 
         mensagem = json.dumps({
             "tipo":        "sensor",
-            "dispositivo": "radar",
+            "dispositivo": "risco_bloqueio",
             "valor":       risco_atual,
             "unidade":     "%",
             "zona":        ZONA
@@ -36,7 +36,7 @@ while True:
         sensor_socket.sendto(mensagem.encode("utf-8"), (HOST, PORT))
         print(f"Radar [{ZONA}]: risco={risco_atual}%")
 
-        time.sleep(2)
+        time.sleep(5)
 
     except KeyboardInterrupt:
         print("\nRadar encerrado.")

@@ -13,9 +13,7 @@ Aceita conexões de drones e mensagens do protocolo Ricart-Agrawala
 import state
 
 
-# ──────────────────────────────────────────────
 # Utilitários
-# ──────────────────────────────────────────────
 
 def montar_mensagem(**campos) -> bytes:
     return (json.dumps(campos, ensure_ascii=False) + "\n").encode("utf-8")
@@ -33,9 +31,7 @@ def ler_linha_tcp(sock: socket.socket) -> tuple:
     return buf[:idx].decode("utf-8").strip(), buf[idx + 1:]
 
 
-# ──────────────────────────────────────────────
 # Lógica dos drones
-# ──────────────────────────────────────────────
 
 def liberar_drone(drone_id: str):
     """Marca o drone como disponível após conclusão ou falha."""
@@ -61,9 +57,7 @@ def recolocar_requisicao(req_id: str, descricao: str = ""):
     print(f"[{state.BROKER_ID}] Requisição {req_id} recolocada na fila.")
 
 
-# ──────────────────────────────────────────────
 # Handlers TCP
-# ──────────────────────────────────────────────
 
 def handle_client(client_socket: socket.socket, address):
     """
@@ -83,7 +77,7 @@ def handle_client(client_socket: socket.socket, address):
 
     tipo = dados.get("tipo", "")
 
-    # ── Mensagens fire-and-forget do Ricart-Agrawala ──
+    # Mensagens do Ricart-Agrawala
     if tipo == "request_sc":
         client_socket.close()
         handle_request_sc(dados)
@@ -94,7 +88,7 @@ def handle_client(client_socket: socket.socket, address):
         handle_ok_sc(dados)
         return
 
-    # ── Identificação de dispositivo (drone) ──
+    # Identificação de dispositivo (drone)
     if tipo != "identificacao":
         print(f"[{state.BROKER_ID}] Mensagem desconhecida de {address}: tipo={tipo}")
         client_socket.close()
@@ -174,9 +168,7 @@ def loop_drone(client_socket: socket.socket, address, drone_id: str, buffer_inic
     print(f"Desconexão: drone {drone_id} {address}")
 
 
-# ──────────────────────────────────────────────
 # Servidor TCP principal
-# ──────────────────────────────────────────────
 
 def tcp_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:

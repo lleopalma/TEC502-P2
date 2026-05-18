@@ -21,7 +21,7 @@ OK_TIMEOUT     = float(os.environ.get("OK_TIMEOUT", "5"))   # timeout para receb
 HOST           = "0.0.0.0"
 
 
-def parse_peers(env: str) -> dict:
+def identificar_peers(env: str) -> dict:
     peers = {}
     for entry in env.split(","):
         entry = entry.strip()
@@ -35,7 +35,7 @@ def parse_peers(env: str) -> dict:
     return peers
 
 
-PEERS = parse_peers(os.environ.get("PEERS", ""))
+PEERS = identificar_peers(os.environ.get("PEERS", ""))
 TODOS = sorted([BROKER_ID] + list(PEERS.keys()))  # lista fixa de todos os brokers
 
 # ──────────────────────────────────────────────

@@ -11,10 +11,7 @@ Avalia criticidade e enfileira requisições de drone quando necessário.
 
 import state
 
-
-# ──────────────────────────────────────────────
 # Lógica dos sensores
-# ──────────────────────────────────────────────
 
 def processar_radar(valor: int, zona: str, endereco):
     """Avalia leitura do radar. Criticidade >= 4 dispara requisição de drone."""
@@ -72,9 +69,7 @@ def _enfileirar_requisicao(criticidade: int, descricao: str):
     print(f"[{state.BROKER_ID}] Requisição enfileirada: {req['req_id']} — {descricao}")
 
 
-# ──────────────────────────────────────────────
 # Servidor UDP
-# ──────────────────────────────────────────────
 
 def udp_server():
     """Recebe leituras de todos os sensores (radar e boia) em uma única porta UDP."""

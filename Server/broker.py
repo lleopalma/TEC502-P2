@@ -32,9 +32,7 @@ from tcp_server import tcp_server, recolocar_requisicao, montar_mensagem
 from udp_server import udp_server
 
 
-# ──────────────────────────────────────────────
 # Utilitários de rede
-# ──────────────────────────────────────────────
 
 def conectar_peer(peer_id: str):
     """Tenta conexão TCP ao peer. Retorna socket ou None se falhar."""
@@ -63,9 +61,7 @@ def enviar_peer(peer_id: str, **campos):
             s.close()
 
 
-# ──────────────────────────────────────────────
 # Ricart-Agrawala
-# ──────────────────────────────────────────────
 
 def solicitar_secao_critica():
     """
@@ -132,10 +128,7 @@ def liberar_secao_critica():
         ).start()
 
 
-# ──────────────────────────────────────────────
 # Handlers de mensagens do Ricart-Agrawala
-# (importados por tcp_server.py via import local)
-# ──────────────────────────────────────────────
 
 def handle_request_sc(msg: dict):
     """
@@ -185,9 +178,7 @@ def handle_ok_sc(msg: dict):
             state.em_cond.notify_all()
 
 
-# ──────────────────────────────────────────────
 # Lógica de alocação de drones
-# ──────────────────────────────────────────────
 
 def alocar_drone(req: dict):
     """Tenta reservar um drone DISPONIVEL. Chamada dentro da SC."""
@@ -252,9 +243,7 @@ def processar_fila():
         liberar_secao_critica()
 
 
-# ──────────────────────────────────────────────
 # Loop de processamento contínuo
-# ──────────────────────────────────────────────
 
 def loop_processamento():
     """
@@ -269,11 +258,9 @@ def loop_processamento():
             print(f"[{state.BROKER_ID}] Erro no processamento: {e}")
 
 
-# ──────────────────────────────────────────────
-# Watchdog de drones
-# ──────────────────────────────────────────────
+# Monitoramento de drones
 
-def watchdog_drones():
+def monitorar_drones():
     """Verifica heartbeats dos drones a cada 2s."""
     while True:
         time.sleep(2)
@@ -290,9 +277,7 @@ def watchdog_drones():
                             recolocar_requisicao(req_id)
 
 
-# ──────────────────────────────────────────────
 # Main
-# ──────────────────────────────────────────────
 
 def main():
     print(f"=== Broker {state.BROKER_ID} | peers: {list(state.PEERS.keys())} ===\n")
@@ -301,7 +286,7 @@ def main():
         threading.Thread(target=tcp_server,         daemon=True, name="tcp"),
         threading.Thread(target=udp_server,          daemon=True, name="udp"),
         threading.Thread(target=loop_processamento,  daemon=True, name="processamento"),
-        threading.Thread(target=watchdog_drones,     daemon=True, name="watchdog-drones"),
+        threading.Thread(target=monitorar_drones,     daemon=True, name="monitoramento-drones"),
     ]
 
     for t in threads:

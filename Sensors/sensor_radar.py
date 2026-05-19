@@ -9,7 +9,7 @@ import os
 # Valor: 0-100 (percentual de obstrução da rota)
 
 HOST = os.environ.get("BROKER_HOST", "broker-a")
-PORT = 12347
+PORT = 12346
 ZONA = os.environ.get("ZONA", "zona-desconhecida")
 
 sensor_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

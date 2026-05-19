@@ -14,7 +14,7 @@ Cada broker solicita acesso à seção crítica com um timestamp lógico.
 # ──────────────────────────────────────────────
 
 BROKER_ID      = os.environ.get("BROKER_ID", "A")
-BROKER_PORT    = int(os.environ.get("BROKER_PORT", "5000"))
+BROKER_PORT    = int(os.environ.get("BROKER_PORT", "12345"))
 UDP_PORT       = int(os.environ.get("UDP_PORT", "12346"))
 DRONE_TIMEOUT  = float(os.environ.get("DRONE_TIMEOUT", "10"))
 OK_TIMEOUT     = float(os.environ.get("OK_TIMEOUT", "5"))   # timeout para receber OK de um peer

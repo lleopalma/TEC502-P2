@@ -63,7 +63,7 @@ def enviar_peer(peer_id: str, **campos):
 
 # Ricart-Agrawala
 
-def solicitar_secao_critica():
+def solicitar_secao_critica() -> bool:
     """
     Fase REQUEST: envia pedido de acesso com timestamp de Lamport para todos.
     Bloqueia até receber OK de todos os peers (ou timeout).
@@ -72,9 +72,9 @@ def solicitar_secao_critica():
         state.em_estado     = "WANTED"
         state.meu_timestamp = state.lamport_tick()
         state.oks_recebidos = set()
+        ts  = state.meu_timestamp
+        bid = state.BROKER_ID
 
-    ts  = state.meu_timestamp
-    bid = state.BROKER_ID
     print(f"[{bid}] REQUEST enviado (ts={ts})")
 
     # Envia REQUEST para todos os peers em paralelo
@@ -93,19 +93,23 @@ def solicitar_secao_critica():
 
     # Aguarda OK de todos os peers com timeout
     deadline = time.monotonic() + state.OK_TIMEOUT * 2
+    timed_out = False
     with state.em_cond:
         while len(state.oks_recebidos) < len(state.PEERS):
             restante = deadline - time.monotonic()
             if restante <= 0:
                 faltando = set(state.PEERS.keys()) - state.oks_recebidos
                 print(f"[{bid}] Timeout aguardando OK de: {faltando}. Assumindo OK.")
+                timed_out = True
                 break
             state.em_cond.wait(timeout=restante)
 
-    # Entra na seção crítica
-    with state.em_cond:
+        if timed_out:
+            state.em_estado = "RELEASED"
+
         state.em_estado = "HELD"
     print(f"[{bid}] Entrou na seção crítica.")
+    return True
 
 
 def liberar_secao_critica():
@@ -205,8 +209,8 @@ def processar_fila():
     if not disponiveis:
         return
 
-    # Solicita acesso à seção crítica
-    solicitar_secao_critica()
+    if not solicitar_secao_critica():
+        return
 
     try:
         with state.fila_lock:
@@ -224,20 +228,26 @@ def processar_fila():
             with state.drone_lock:
                 sock_drone = state.drones[drone_id].get("sock")
 
-            if sock_drone:
-                try:
-                    sock_drone.sendall(montar_mensagem(
-                        tipo="comando",
-                        acao="INICIAR_MISSAO",
-                        req_id=req["req_id"],
-                        descricao=req["descricao"]
-                    ))
-                    print(f"[{state.BROKER_ID}] Drone {drone_id} → missão {req['req_id']}")
-                except Exception:
-                    recolocar_requisicao(req["req_id"], req["descricao"])
-                    with state.drone_lock:
-                        state.drones[drone_id]["estado"] = "DISPONIVEL"
-                        state.drones[drone_id]["missao"] = None
+            if not sock_drone:
+                with state.drone_lock:
+                    state.drones[drone_id]["estado"] = "DISPONIVEL"
+                    state.drones[drone_id]["missao"] = None
+                recolocar_requisicao(req["req_id"], req["descricao"])
+                continue
+
+            try:
+                sock_drone.sendall(montar_mensagem(
+                    tipo="comando",
+                    acao="INICIAR_MISSAO",
+                    req_id=req["req_id"],
+                    descricao=req["descricao"]
+                ))
+                print(f"[{state.BROKER_ID}] Drone {drone_id} → missão {req['req_id']}")
+            except Exception:
+                recolocar_requisicao(req["req_id"], req["descricao"])
+                with state.drone_lock:
+                    state.drones[drone_id]["estado"] = "DISPONIVEL"
+                    state.drones[drone_id]["missao"] = None
 
     finally:
         liberar_secao_critica()
@@ -265,16 +275,20 @@ def monitorar_drones():
     while True:
         time.sleep(2)
         agora = time.monotonic()
-        with state.drone_lock:
-            for drone_id, info in list(state.drones.items()):
-                if info["estado"] == "EM_MISSAO":
+        reqs = []
+        for drone_id, info in list(state.drones.items()):
+            if info["estado"] == "EM_MISSAO":
+                with state.drone_lock:
                     if agora - info.get("ultimo_heartbeat", agora) > state.DRONE_TIMEOUT:
                         req_id = info.get("missao", "")
                         info["estado"] = "FALHOU"
                         info["missao"] = None
                         print(f"[{state.BROKER_ID}] Drone {drone_id} sem heartbeat — FALHOU.")
                         if req_id:
-                            recolocar_requisicao(req_id)
+                            reqs.append(req_id)
+                for req_id in reqs:
+                    recolocar_requisicao(req_id)
+                            
 
 
 # Main

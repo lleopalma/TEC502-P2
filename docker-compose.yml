@@ -19,7 +19,7 @@ services:
     container_name: drone-${BROKER_ID}1
     environment:
       SERVER_HOST: broker-${BROKER_ID}
-      PORT: "5000"
+      PORT: "12345"
     depends_on:
       - broker
     profiles: ["${BROKER_ID}"]
@@ -29,7 +29,7 @@ services:
     container_name: drone-${BROKER_ID}2
     environment:
       SERVER_HOST: broker-${BROKER_ID}
-      PORT: "5000"
+      PORT: "12345"
     depends_on:
       - broker
     profiles: ["${BROKER_ID}"]

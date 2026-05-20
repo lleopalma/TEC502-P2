@@ -1,5 +1,7 @@
 import os
 import threading
+import time
+import json
 
 """
 state.py — Estado global compartilhado
@@ -77,3 +79,22 @@ drone_lock = threading.Lock()
 
 fila_reqs = []
 fila_lock = threading.Lock()
+
+# Funções de uso global
+
+def recolocar_requisicao(req_id: str, descricao: str = ""):
+    """Recoloca requisição na fila após falha do drone."""
+    nova = {
+        "req_id":      f"{req_id}-retry-{int(time.monotonic()*1000)}",
+        "criticidade": 3,
+        "ts":          time.monotonic(),
+        "setor":       BROKER_ID,
+        "descricao":   descricao or f"Requeue de {req_id} após falha de drone",
+    }
+    with fila_lock:
+        fila_reqs.append(nova)
+        fila_reqs.sort(key=lambda r: (-r["criticidade"], r["ts"]))
+    print(f"[{BROKER_ID}] Requisição {req_id} recolocada na fila.")
+
+def montar_mensagem(**campos) -> bytes:
+    return (json.dumps(campos, ensure_ascii=False) + "\n").encode("utf-8")

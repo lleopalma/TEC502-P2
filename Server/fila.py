@@ -15,9 +15,7 @@ NOVA MENSAGEM TCP (fire-and-forget, como request_sc/ok_sc):
 """
 
 import socket
-
 import state
-from tcp_server import recolocar_requisicao, montar_mensagem
 
 
 # Envio de requisição a um peer (fire-and-forget)
@@ -31,7 +29,7 @@ def _enviar_req_peer(peer_id: str, req: dict):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(state.OK_TIMEOUT)
         s.connect((host, port))
-        s.sendall(montar_mensagem(
+        s.sendall(state.montar_mensagem(
             tipo="encaminhar_req",
             req=req,
             de=state.BROKER_ID
@@ -142,11 +140,11 @@ def processar_fila_distribuida():
                 with state.drone_lock:
                     state.drones[drone_id]["estado"] = "DISPONIVEL"
                     state.drones[drone_id]["missao"] = None
-                recolocar_requisicao(req["req_id"], req.get("descricao", ""))
+                state.recolocar_requisicao(req["req_id"], req.get("descricao", ""))
                 continue
 
             try:
-                sock_drone.sendall(montar_mensagem(
+                sock_drone.sendall(state.montar_mensagem(
                     tipo="comando",
                     acao="INICIAR_MISSAO",
                     req_id=req["req_id"],
@@ -154,7 +152,7 @@ def processar_fila_distribuida():
                 ))
                 print(f"[{state.BROKER_ID}] Drone {drone_id} → missão {req['req_id']}")
             except Exception:
-                recolocar_requisicao(req["req_id"], req.get("descricao", ""))
+                state.recolocar_requisicao(req["req_id"], req.get("descricao", ""))
                 with state.drone_lock:
                     state.drones[drone_id]["estado"] = "DISPONIVEL"
                     state.drones[drone_id]["missao"] = None

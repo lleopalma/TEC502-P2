@@ -26,7 +26,7 @@ Variáveis de ambiente:
 """
 
 import state
-from tcp_server import tcp_server, recolocar_requisicao, montar_mensagem
+from tcp_server import tcp_server
 from udp_server import udp_server
 from fila import processar_fila_distribuida
 
@@ -52,7 +52,7 @@ def enviar_peer(peer_id: str, **campos):
     s = conectar_peer(peer_id)
     if s:
         try:
-            s.sendall(montar_mensagem(**campos))
+            s.sendall(state.montar_mensagem(**campos))
         except Exception:
             pass
         finally:
@@ -223,7 +223,7 @@ def monitorar_drones():
                         if req_id:
                             reqs.append(req_id)
                 for req_id in reqs:
-                    recolocar_requisicao(req_id)
+                    state.recolocar_requisicao(req_id)
                             
 
 

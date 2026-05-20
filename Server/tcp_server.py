@@ -14,10 +14,6 @@ from fila import handle_encaminhar_req
 
 # Utilitários
 
-def montar_mensagem(**campos) -> bytes:
-    return (json.dumps(campos, ensure_ascii=False) + "\n").encode("utf-8")
-
-
 def ler_linha_tcp(sock: socket.socket) -> tuple:
     """Lê do socket até encontrar \\n. Retorna (linha_str, buffer_restante_bytes)."""
     buf = b""
@@ -39,21 +35,6 @@ def liberar_drone(drone_id: str):
             state.drones[drone_id]["estado"] = "DISPONIVEL"
             state.drones[drone_id]["missao"] = None
     print(f"[{state.BROKER_ID}] Drone {drone_id} liberado.")
-
-
-def recolocar_requisicao(req_id: str, descricao: str = ""):
-    """Recoloca requisição na fila após falha do drone."""
-    nova = {
-        "req_id":      f"{req_id}-retry-{int(time.monotonic()*1000)}",
-        "criticidade": 3,
-        "ts":          time.monotonic(),
-        "setor":       state.BROKER_ID,
-        "descricao":   descricao or f"Requeue de {req_id} após falha de drone",
-    }
-    with state.fila_lock:
-        state.fila_reqs.append(nova)
-        state.fila_reqs.sort(key=lambda r: (-r["criticidade"], r["ts"]))
-    print(f"[{state.BROKER_ID}] Requisição {req_id} recolocada na fila.")
 
 
 # Handlers TCP
@@ -111,7 +92,7 @@ def handle_client(client_socket: socket.socket, address):
                 "sock":             client_socket,
             }
         print(f"Conexão: drone {drone_id} registrado {address}")
-        client_socket.sendall(montar_mensagem(
+        client_socket.sendall(state.montar_mensagem(
             tipo="confirmacao",
             mensagem=f"Registrado como DRONE no broker {state.BROKER_ID}"
         ))
@@ -166,7 +147,7 @@ def loop_drone(client_socket: socket.socket, address, drone_id: str, buffer_inic
             state.drones[drone_id]["estado"] = "FALHOU"
             state.drones[drone_id]["sock"]   = None
             if req_id:
-                recolocar_requisicao(req_id)
+                state.recolocar_requisicao(req_id)
 
     client_socket.close()
     print(f"Desconexão: drone {drone_id} {address}")

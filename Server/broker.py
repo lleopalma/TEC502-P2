@@ -5,24 +5,22 @@ import time
 
 """
 broker.py — Exclusão mútua com Ricart-Agrawala + Relógio de Lamport
-=====================================================================
-Não há token circulando. Cada broker solicita acesso à seção crítica
-(alocar drone) com um timestamp lógico de Lamport.
+Cada broker solicita acesso à seção crítica (alocar drone) com um timestamp lógico de Lamport.
 
 Protocolo:
-  1. Broker quer alocar → envia REQUEST(ts, id) para todos os peers
+  1. Broker quer alocar -> envia REQUEST(ts, id) para todos os peers
   2. Peer responde OK imediatamente se:
        - não está em WANTED/HELD, ou
        - está em WANTED mas meu timestamp é menor (ou igual com ID menor)
      Caso contrário, enfileira o OK para depois
-  3. Quando recebe OK de todos (ou timeout) → entra na SC, aloca drones
-  4. Ao sair da SC → envia OK para todos que estavam na fila pendente
+  3. Quando recebe OK de todos (ou timeout) -> entra na SC, aloca drones
+  4. Ao sair da SC -> envia OK para todos que estavam na fila pendente
 
 Variáveis de ambiente:
   BROKER_ID     ex: "A"
-  BROKER_PORT   ex: "5000"
+  BROKER_PORT   ex: "12345"
   UDP_PORT      ex: "12346"
-  PEERS         ex: "B:broker-b:5000,C:broker-c:5000,D:broker-d:5000"
+  PEERS         ex: "B:broker-b:12345,C:broker-c:12345,D:broker-d:12345"
   DRONE_TIMEOUT ex: "10"
   OK_TIMEOUT    ex: "5"   (segundos para aguardar OK de cada peer)
 """
@@ -30,7 +28,7 @@ Variáveis de ambiente:
 import state
 from tcp_server import tcp_server, recolocar_requisicao, montar_mensagem
 from udp_server import udp_server
-
+from fila import processar_fila_distribuida
 
 # Utilitários de rede
 
@@ -59,7 +57,6 @@ def enviar_peer(peer_id: str, **campos):
             pass
         finally:
             s.close()
-
 
 # Ricart-Agrawala
 
@@ -131,7 +128,6 @@ def liberar_secao_critica():
             daemon=True
         ).start()
 
-
 # Handlers de mensagens do Ricart-Agrawala
 
 def handle_request_sc(msg: dict):
@@ -181,7 +177,6 @@ def handle_ok_sc(msg: dict):
         if len(state.oks_recebidos) >= len(state.PEERS):
             state.em_cond.notify_all()
 
-
 # Lógica de alocação de drones
 
 def alocar_drone(req: dict):
@@ -194,65 +189,6 @@ def alocar_drone(req: dict):
                 return drone_id
     return None
 
-
-def processar_fila():
-    """
-    Tenta processar a fila de requisições usando exclusão mútua.
-    Só entra na SC se houver requisições pendentes e drones disponíveis.
-    """
-    with state.fila_lock:
-        if not state.fila_reqs:
-            return
-
-    with state.drone_lock:
-        disponiveis = [d for d, i in state.drones.items() if i["estado"] == "DISPONIVEL"]
-    if not disponiveis:
-        return
-
-    if not solicitar_secao_critica():
-        return
-
-    try:
-        with state.fila_lock:
-            pendentes = list(state.fila_reqs)
-
-        for req in pendentes:
-            drone_id = alocar_drone(req)
-            if not drone_id:
-                break
-
-            with state.fila_lock:
-                state.fila_reqs[:] = [r for r in state.fila_reqs
-                                      if r["req_id"] != req["req_id"]]
-
-            with state.drone_lock:
-                sock_drone = state.drones[drone_id].get("sock")
-
-            if not sock_drone:
-                with state.drone_lock:
-                    state.drones[drone_id]["estado"] = "DISPONIVEL"
-                    state.drones[drone_id]["missao"] = None
-                recolocar_requisicao(req["req_id"], req["descricao"])
-                continue
-
-            try:
-                sock_drone.sendall(montar_mensagem(
-                    tipo="comando",
-                    acao="INICIAR_MISSAO",
-                    req_id=req["req_id"],
-                    descricao=req["descricao"]
-                ))
-                print(f"[{state.BROKER_ID}] Drone {drone_id} → missão {req['req_id']}")
-            except Exception:
-                recolocar_requisicao(req["req_id"], req["descricao"])
-                with state.drone_lock:
-                    state.drones[drone_id]["estado"] = "DISPONIVEL"
-                    state.drones[drone_id]["missao"] = None
-
-    finally:
-        liberar_secao_critica()
-
-
 # Loop de processamento contínuo
 
 def loop_processamento():
@@ -263,7 +199,7 @@ def loop_processamento():
     while True:
         time.sleep(2)
         try:
-            processar_fila()
+            processar_fila_distribuida()
         except Exception as e:
             print(f"[{state.BROKER_ID}] Erro no processamento: {e}")
 

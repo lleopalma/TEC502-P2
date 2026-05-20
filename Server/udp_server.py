@@ -3,8 +3,7 @@ import json
 import time
 
 """
-udp_server.py — Servidor UDP de sensores
-=========================================
+udp_server.py — Servidor UDP de sensores=
 Recebe leituras de radar e boias em uma única porta UDP.
 Avalia criticidade e enfileira requisições de drone quando necessário.
 """

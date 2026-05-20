@@ -5,13 +5,12 @@ import time
 
 """
 tcp_server.py — Servidor TCP de conexões
-=========================================
 Aceita conexões de drones e mensagens do protocolo Ricart-Agrawala
 (request_sc, ok_sc) dos outros brokers.
 """
 
 import state
-
+from fila import handle_encaminhar_req
 
 # Utilitários
 
@@ -86,6 +85,11 @@ def handle_client(client_socket: socket.socket, address):
     if tipo == "ok_sc":
         client_socket.close()
         handle_ok_sc(dados)
+        return
+    
+    if tipo == "encaminhar_req":
+        client_socket.close()
+        handle_encaminhar_req(dados)
         return
 
     # Identificação de dispositivo (drone)

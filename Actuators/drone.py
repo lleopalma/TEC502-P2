@@ -9,7 +9,7 @@ import random
 # Conecta via TCP, recebe comandos e envia status no formato JSON
 
 HOST = os.environ.get("SERVER_HOST", "broker-a")
-PORT = int(os.environ.get("PORT", "5000"))
+PORT = int(os.environ.get("PORT", "12345"))
 RETRY_INTERVAL = 5
 DRONE_ID = socket.gethostname()  # Drone id utilizando o nome do container
 HEARTBEAT_INTERVAL = 2  # Intervalo do heartbeat em segundos

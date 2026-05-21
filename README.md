@@ -173,7 +173,24 @@ Cada broker mantém uma fila local ordenada por `(-criticidade, timestamp)`. A l
 | Radar | Risco ≥ 20% | 2 |
 | Radar | Risco < 20% | 1 |
 
-Requisições com criticidade < 4 não disparam despacho de drone (limiar configurável em `udp_server.py`). A fila descarta a requisição de menor prioridade quando atinge o limite de 10 itens. Um loop de processamento (`loop_processamento`) verifica a fila a cada 2 segundos e tenta alocar drones disponíveis via exclusão mútua.
+Requisições com criticidade < 3 não disparam despacho de drone (limiar configurável em `udp_server.py`).
+A fila não possui limite de tamanho — todas as requisições são mantidas até serem atendidas. Um loop de processamento (`loop_processamento`) verifica a fila a cada 2 segundos e tenta alocar drones disponíveis via exclusão mútua.
+
+### Encaminhamento entre brokers
+
+Quando um broker não possui drones disponíveis localmente, as requisições
+mais críticas da sua fila são encaminhadas para os peers via mensagem TCP
+`encaminhar_req`. O broker receptor insere a requisição na sua própria fila
+local com a prioridade original preservada, evitando duplicatas por `req_id`.
+
+Mensagem de encaminhamento:
+```json
+{"tipo": "encaminhar_req", "req": {...}, "de": "A"}
+```
+
+Ao liberar um drone, o loop de processamento consulta a fila automaticamente
+e despacha a próxima requisição, independente de ter sido gerada localmente
+ou recebida de outro setor.
 
 ---
 
@@ -222,6 +239,7 @@ TEC502-P2/
 │   ├── tcp_server.py    # Servidor TCP: handshake de drones, mensagens P2P entre brokers
 │   ├── udp_server.py    # Servidor UDP: recepção de sensores, enfileiramento
 │   ├── state.py         # Estado global: relógio de Lamport, RA, fila, drones
+|   ├── fila.py          # Fila distribuida: lógica da fila distribuida do sistema
 │   └── Dockerfile
 ├── Actuators/
 │   ├── drone.py         # Atuador drone: conexão TCP, heartbeat, execução de missão
@@ -262,17 +280,17 @@ TEC502-P2/
 Suba o broker A com seus drones e sensores:
 
 ```bash
-BROKER_ID=a PEERS="" docker compose --profile a up -d
+BROKER_ID=A PEERS="" docker compose --profile A up 
 ```
 
 Para simular dois brokers na mesma máquina (portas diferentes, rede Docker):
 
 ```bash
 # Terminal 1 — Broker A (porta 12345)
-BROKER_ID=a PEERS="b:broker-b:12345" docker compose --profile a up -d
+BROKER_ID=A PEERS="B:broker-B:12345" docker compose --profile A up 
 
 # Terminal 2 — Broker B (porta diferente requer override de portas)
-BROKER_ID=b PEERS="a:broker-a:12345" docker compose --profile b up -d
+BROKER_ID=A PEERS="A:broker-A:12345" docker compose --profile B up 
 ```
 
 ### Execução em máquinas distintas (laboratório)
@@ -282,15 +300,15 @@ BROKER_ID=b PEERS="a:broker-a:12345" docker compose --profile b up -d
 ```bash
 export BROKER_ID=a
 export PEERS="b:192.168.1.11:12345"
-docker compose --profile a up -d
+docker compose --profile a up 
 ```
 
 **Máquina 2 (IP: 192.168.1.11) — Broker B:**
 
 ```bash
-export BROKER_ID=b
-export PEERS="a:192.168.1.10:12345"
-docker compose --profile b up -d
+export BROKER_ID=B
+export PEERS="A:192.168.1.10:12345"
+docker compose --profile B up 
 ```
 
 Verifique os logs do broker para confirmar que os servidores TCP e UDP estão ativos:
@@ -305,8 +323,8 @@ docker logs broker-a
 ### Parar tudo
 
 ```bash
-docker compose --profile a down
-docker compose --profile b down
+docker compose --profile A down
+docker compose --profile B down
 ```
 
 ### Teste de falha de broker
@@ -315,10 +333,10 @@ Para demonstrar que a falha de um broker não afeta os demais:
 
 ```bash
 # Com dois brokers rodando, derrube o broker B
-docker stop broker-b
+docker stop broker-B
 
-# Observe que broker-a continua processando sua fila normalmente
-docker logs -f broker-a
+# Observe que broker-B continua processando sua fila normalmente
+docker logs -f broker-A
 # [A] Timeout aguardando OK de: {'B'}. Assumindo OK.
 # [A] Entrou na seção crítica.
 # [A] Drone drone-a1 → missão A-...

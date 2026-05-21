@@ -45,8 +45,6 @@ def _criticidade_radar(valor: int) -> int:
     return 1
 
 
-MAX_FILA = 10  # máximo de requisições na fila por broker
-
 def _enfileirar_requisicao(criticidade: int, descricao: str):
     """
     Cria e enfileira uma nova requisição de drone, ordenada por criticidade e timestamp.
@@ -60,9 +58,6 @@ def _enfileirar_requisicao(criticidade: int, descricao: str):
         "descricao":   descricao,
     }
     with state.fila_lock:
-        if len(state.fila_reqs) >= MAX_FILA:
-            descartada = state.fila_reqs.pop()  # remove a de menor prioridade
-            print(f"[{state.BROKER_ID}] Fila cheia — descartando req {descartada['req_id']} (crit={descartada['criticidade']})")
         state.fila_reqs.append(req)
         state.fila_reqs.sort(key=lambda r: (-r["criticidade"], r["ts"]))
     print(f"[{state.BROKER_ID}] Requisição enfileirada: {req['req_id']} — {descricao}")

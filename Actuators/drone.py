@@ -60,7 +60,7 @@ def enviar_heartbeat(s, stop_event):
 
 def executar_missao(sock, req_id):
     """Simula a execução de uma missão, enviando status e conclusão."""
-    duracao = random.randint(5, 15)  # segundos
+    duracao = random.randint(5, 8)  # segundos
     print(f"Missão {req_id} iniciada. Duração estimada: {duracao}s")
     time.sleep(duracao)
     enviar(sock, tipo="missao_concluida", drone_id=DRONE_ID, req_id=req_id)       

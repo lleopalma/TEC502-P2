@@ -7,10 +7,10 @@ Cobre:
   2. Handshake de drone (identificação + confirmação)
   3. Envio UDP de radar e boia sem erros
   4. Requisição crítica (boia) é enfileirada e drone recebe missão
-  5. Conclusão de missão libera o drone (sem duplicata)
-  6. Falha de drone: broker detecta heartbeat ausente e recoloca na fila
+  5. Dois drones simultâneos sem duplicidade de missão
+  6. Falha de drone: broker recoloca missão na fila e redistribui
   7. Reconexão de drone após queda
-  8. Dois drones simultâneos sem duplicidade de missão
+  8. Radar crítico (>= 60%) dispara missão
   9. Teste de carga: N sensores + 2 drones durante D segundos
 
 Uso:
@@ -85,7 +85,7 @@ def tcp_connect(host, port, timeout=3.0):
         s.settimeout(timeout)
         s.connect((host, port))
         return s
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -95,20 +95,33 @@ def enviar(sock, **campos):
     sock.sendall(msg.encode("utf-8"))
 
 
-def receber_linha(sock, timeout=4.0) -> dict | None:
-    """Lê uma linha JSON do socket. Retorna dict ou None em caso de erro/timeout."""
+def receber_linha(sock, timeout=4.0):
+    """Lê uma linha JSON do socket. Retorna dict ou None em caso de erro/timeout.
+    
+    Usa polling com timeout curto por iteração para não fechar o socket
+    em caso de timeout — o socket permanece válido para o broker continuar
+    podendo despachar missões para este drone.
+    """
     buf = ""
-    sock.settimeout(timeout)
+    deadline = time.monotonic() + timeout
+    sock.settimeout(0.5)  # timeout curto por iteração, não fecha o socket
     try:
-        while "\n" not in buf:
-            chunk = sock.recv(1024).decode("utf-8")
-            if not chunk:
+        while time.monotonic() < deadline:
+            try:
+                chunk = sock.recv(1024).decode("utf-8")
+                if not chunk:
+                    return None
+                buf += chunk
+                if "\n" in buf:
+                    linha, _ = buf.split("\n", 1)
+                    return json.loads(linha.strip())
+            except socket.timeout:
+                continue  # ainda dentro do deadline, continua esperando
+            except Exception:
                 return None
-            buf += chunk
-        linha, _ = buf.split("\n", 1)
-        return json.loads(linha.strip())
-    except Exception:
-        return None
+        return None  # deadline expirado
+    finally:
+        sock.settimeout(None)  # restaura socket para modo bloqueante
 
 
 def enviar_udp(host, udp_port, **campos):
@@ -175,7 +188,6 @@ def teste_handshake_drone(host, port):
 def teste_udp_sensores(host, udp_port):
     cabecalho("3. Envio UDP de sensores")
 
-    # Radar com risco baixo (não dispara requisição, só testa envio)
     try:
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="risco_bloqueio",
@@ -184,7 +196,6 @@ def teste_udp_sensores(host, udp_port):
     except Exception as e:
         falhou("UDP radar enviado sem erro", str(e))
 
-    # Boia normal
     try:
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="boia",
@@ -201,32 +212,41 @@ def teste_udp_sensores(host, udp_port):
 def teste_missao_boia_critica(host, port, udp_port):
     cabecalho("4. Missão disparada por boia crítica")
 
-    s, conf = handshake_drone(host, port, drone_id="teste-drone-boia")
+    s, conf = handshake_drone(host, port, drone_id="teste-drone-boia-unico")
     if s is None:
         falhou("Drone conectado para teste de boia", "Falha na conexão")
         return
 
     ok("Drone conectado", "pronto para receber missão")
 
-    # Aguarda broker registrar o drone (pequeno delay)
-    time.sleep(0.5)
+    # Heartbeat em background para manter drone visível ao broker
+    hb_stop = threading.Event()
+    def _hb():
+        while not hb_stop.is_set():
+            try:
+                enviar(s, tipo="heartbeat", dispositivo="drone",
+                       drone_id="teste-drone-boia-unico")
+            except Exception:
+                break
+            time.sleep(2)
+    threading.Thread(target=_hb, daemon=True).start()
 
-    # Dispara alerta de deriva (criticidade 5 — sempre enfileira)
-    for _ in range(3):  # envia 3x para garantir que broker processa
+    # Aguarda broker registrar o drone no ciclo atual
+    time.sleep(2.5)
+
+    for _ in range(5):
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="boia",
                    valor=1, unidade="bool", boia_id="boia-teste-critica")
-        time.sleep(0.3)
+        time.sleep(0.5)
 
-    # Aguarda broker processar fila (loop_processamento roda a cada 2s)
-    comando = receber_linha(s, timeout=8.0)
+    comando = receber_linha(s, timeout=15.0)
+    hb_stop.set()
 
     if comando and comando.get("tipo") == "comando" and comando.get("acao") == "INICIAR_MISSAO":
         req_id = comando.get("req_id", "")
         ok("Missão recebida pelo drone", f"req_id={req_id}")
-
-        # Conclui missão
-        enviar(s, tipo="missao_concluida", drone_id="teste-drone-boia", req_id=req_id)
+        enviar(s, tipo="missao_concluida", drone_id="teste-drone-boia-unico", req_id=req_id)
         ok("Conclusão de missão enviada", f"req_id={req_id}")
     else:
         falhou("Missão recebida pelo drone",
@@ -244,19 +264,68 @@ def teste_sem_duplicidade(host, port, udp_port):
 
     missoes_recebidas = []
     lock = threading.Lock()
-    prontos = threading.Barrier(2)
+    prontos = threading.Barrier(3)  # 2 drones + main
 
     def drone_worker(drone_id):
         s, conf = handshake_drone(host, port, drone_id=drone_id)
         if not s:
+            prontos.wait()
             return
-        prontos.wait()  # garante que ambos estão conectados antes de disparar sensores
-        cmd = receber_linha(s, timeout=10.0)
-        if cmd and cmd.get("tipo") == "comando":
+
+        # Heartbeat contínuo — mantém drone visível ao broker durante o REQUEST
+        hb_stop = threading.Event()
+        def _hb(sock=s, did=drone_id, stop=hb_stop):
+            while not stop.is_set():
+                try:
+                    enviar(sock, tipo="heartbeat", dispositivo="drone", drone_id=did)
+                except Exception:
+                    break
+                time.sleep(2)
+        threading.Thread(target=_hb, daemon=True).start()
+
+        # Sinaliza pronto; aguarda main disparar os sensores
+        prontos.wait()
+
+        # Polling sem fechar o socket no timeout — aguarda até 60s
+        # (cobre OK_TIMEOUT*2=10s do RA + processamento)
+        buf = ""
+        s.settimeout(1.0)
+        deadline = time.monotonic() + 60.0
+        cmd = None
+        while time.monotonic() < deadline:
+            try:
+                chunk = s.recv(1024).decode("utf-8")
+                if not chunk:
+                    break
+                buf += chunk
+                while "\n" in buf:
+                    linha, buf = buf.split("\n", 1)
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    try:
+                        msg = json.loads(linha)
+                        if msg.get("tipo") == "comando":
+                            cmd = msg
+                            break
+                    except Exception:
+                        continue
+                if cmd:
+                    break
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+
+        hb_stop.set()
+        if cmd:
             with lock:
                 missoes_recebidas.append((drone_id, cmd.get("req_id")))
-            enviar(s, tipo="missao_concluida",
-                   drone_id=drone_id, req_id=cmd.get("req_id"))
+            try:
+                enviar(s, tipo="missao_concluida",
+                       drone_id=drone_id, req_id=cmd.get("req_id"))
+            except Exception:
+                pass
         s.close()
 
     t1 = threading.Thread(target=drone_worker, args=("teste-dup-drone-1",))
@@ -264,20 +333,23 @@ def teste_sem_duplicidade(host, port, udp_port):
     t1.start()
     t2.start()
 
-    time.sleep(0.8)  # dá tempo para os drones conectarem e barrarem
+    # Espera ambos os drones conectados e com heartbeat ativo
+    prontos.wait()
+    time.sleep(1.0)  # garante que broker registrou os dois como DISPONIVEL
 
-    # Dispara duas boias críticas quase simultaneamente
+    # Dispara dois eventos simultâneos
     for i in range(2):
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="boia",
                    valor=1, unidade="bool", boia_id=f"boia-dup-{i}")
         time.sleep(0.1)
 
-    t1.join(timeout=12)
-    t2.join(timeout=12)
+    t1.join(timeout=65)
+    t2.join(timeout=65)
 
     if len(missoes_recebidas) == 0:
-        aviso("Nenhum drone recebeu missão (fila pode estar vazia ou loop ainda não rodou)")
+        falhou("Dois drones receberam missões",
+               "Nenhum drone recebeu missão — broker não despachou")
         return
 
     req_ids = [r[1] for r in missoes_recebidas]
@@ -298,26 +370,47 @@ def teste_sem_duplicidade(host, port, udp_port):
 def teste_falha_drone(host, port, udp_port):
     cabecalho("6. Tolerância a falha de drone")
 
-    # Drone 1: recebe missão e desconecta abruptamente (sem missao_concluida)
+    # Drone 2 conecta PRIMEIRO para estar disponível quando a req for redistribuída
+    s2, conf2 = handshake_drone(host, port, drone_id="teste-falha-drone-2")
+    if not s2:
+        falhou("Drone 2 conectado para receber redistribuição", "Falha na conexão")
+        return
+
+    # Drone 1 conecta, recebe missão e desconecta abruptamente
     s1, conf1 = handshake_drone(host, port, drone_id="teste-falha-drone-1")
     if not s1:
         falhou("Drone 1 conectado para teste de falha", "Falha na conexão")
+        s2.close()
         return
     ok("Drone 1 conectado", "vai desconectar abruptamente após receber missão")
 
-    time.sleep(0.5)
+    # Heartbeat para drone 1 ficar visível ao broker
+    hb_stop = threading.Event()
+    def _hb1():
+        while not hb_stop.is_set():
+            try:
+                enviar(s1, tipo="heartbeat", dispositivo="drone",
+                       drone_id="teste-falha-drone-1")
+            except Exception:
+                break
+            time.sleep(2)
+    threading.Thread(target=_hb1, daemon=True).start()
 
-    # Dispara evento crítico
-    for _ in range(3):
+    # Aguarda broker registrar ambos os drones
+    time.sleep(2.5)
+
+    for _ in range(5):
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="boia",
                    valor=1, unidade="bool", boia_id="boia-falha-teste")
-        time.sleep(0.2)
+        time.sleep(0.5)
 
-    cmd = receber_linha(s1, timeout=8.0)
+    cmd = receber_linha(s1, timeout=15.0)
+    hb_stop.set()
     if not (cmd and cmd.get("tipo") == "comando"):
         aviso(f"Drone 1 não recebeu missão (resposta: {cmd}). Pulando teste de falha.")
         s1.close()
+        s2.close()
         return
 
     req_id_original = cmd.get("req_id", "")
@@ -327,24 +420,17 @@ def teste_falha_drone(host, port, udp_port):
     s1.close()
     ok("Drone 1 desconectado abruptamente", "broker deve detectar e recolocar na fila")
 
-    # Drone 2: conecta e aguarda a missão ser redistribuída
-    # (broker detecta ausência de heartbeat após DRONE_TIMEOUT, default 10s)
-    aviso("Aguardando broker detectar falha e redistribuir (pode levar até ~12s)...")
-
-    s2, conf2 = handshake_drone(host, port, drone_id="teste-falha-drone-2")
-    if not s2:
-        falhou("Drone 2 conectado para receber redistribuição", "Falha na conexão")
-        return
-
-    # Dispara novo evento para garantir que a fila seja processada após redistribuição
+    aviso("Aguardando broker recolocar req na fila e processar (~4s)...")
     time.sleep(1.0)
-    for _ in range(2):
+
+    # Dispara novo evento para garantir processamento da fila
+    for _ in range(3):
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="boia",
                    valor=1, unidade="bool", boia_id="boia-falha-redistrib")
         time.sleep(0.2)
 
-    cmd2 = receber_linha(s2, timeout=15.0)
+    cmd2 = receber_linha(s2, timeout=10.0)
 
     if cmd2 and cmd2.get("tipo") == "comando" and cmd2.get("acao") == "INICIAR_MISSAO":
         ok("Missão redistribuída ao drone 2 após falha do drone 1",
@@ -353,7 +439,7 @@ def teste_falha_drone(host, port, udp_port):
                drone_id="teste-falha-drone-2", req_id=cmd2.get("req_id"))
     else:
         falhou("Missão redistribuída ao drone 2",
-               f"Resposta: {cmd2} (verifique DRONE_TIMEOUT e loop de monitoramento)")
+               f"Resposta: {cmd2}")
 
     s2.close()
 
@@ -393,29 +479,43 @@ def teste_reconexao_drone(host, port):
 def teste_missao_radar_critico(host, port, udp_port):
     cabecalho("8. Missão disparada por radar crítico (risco >= 60%)")
 
-    s, conf = handshake_drone(host, port, drone_id="teste-drone-radar")
+    s, conf = handshake_drone(host, port, drone_id="teste-drone-radar-unico")
     if s is None:
         falhou("Drone conectado para teste de radar", "Falha na conexão")
         return
 
-    time.sleep(0.5)
+    # Envia heartbeat em background enquanto aguarda missão —
+    # necessário para o broker não ignorar este drone em favor de outros
+    hb_stop = threading.Event()
+    def _hb():
+        while not hb_stop.is_set():
+            try:
+                enviar(s, tipo="heartbeat", dispositivo="drone",
+                       drone_id="teste-drone-radar-unico")
+            except Exception:
+                break
+            time.sleep(2)
+    threading.Thread(target=_hb, daemon=True).start()
 
-    # Risco 80% = criticidade 5 — deve enfileirar
-    for _ in range(3):
+    # Aguarda broker registrar o drone no ciclo atual
+    time.sleep(2.5)
+
+    # Dispara radar crítico repetidamente para garantir enfileiramento
+    for _ in range(5):
         enviar_udp(host, udp_port,
                    tipo="sensor", dispositivo="risco_bloqueio",
                    valor=85, unidade="%", zona="zona-teste-radar")
-        time.sleep(0.3)
+        time.sleep(0.5)
 
-    cmd = receber_linha(s, timeout=8.0)
+    cmd = receber_linha(s, timeout=15.0)
+    hb_stop.set()
 
     if cmd and cmd.get("tipo") == "comando" and cmd.get("acao") == "INICIAR_MISSAO":
         ok("Missão recebida por radar crítico (85%)", f"req_id={cmd.get('req_id')}")
         enviar(s, tipo="missao_concluida",
-               drone_id="teste-drone-radar", req_id=cmd.get("req_id"))
+               drone_id="teste-drone-radar-unico", req_id=cmd.get("req_id"))
     else:
-        falhou("Missão recebida por radar crítico",
-               f"Resposta: {cmd}")
+        falhou("Missão recebida por radar crítico", f"Resposta: {cmd}")
 
     s.close()
 
@@ -432,56 +532,74 @@ def teste_carga(host, port, udp_port, duracao=10):
     missoes_recv = []
     lock         = threading.Lock()
     fim          = threading.Event()
+    drones_prontos = threading.Barrier(3)  # 2 drones + main
 
-    # — Drones —
     def worker_drone(drone_id):
         nonlocal erros_tcp
-        while not fim.is_set():
-            s, conf = handshake_drone(host, port, drone_id=drone_id, timeout=3.0)
-            if not s:
-                with lock:
-                    erros_tcp += 1
-                time.sleep(1)
-                continue
 
-            # Envia heartbeat enquanto aguarda missão
-            hb_stop = threading.Event()
-            def hb():
-                while not hb_stop.is_set() and not fim.is_set():
-                    try:
-                        enviar(s, tipo="heartbeat", dispositivo="drone", drone_id=drone_id)
-                    except Exception:
-                        break
-                    time.sleep(2)
-            threading.Thread(target=hb, daemon=True).start()
+        s, conf = handshake_drone(host, port, drone_id=drone_id, timeout=5.0)
+        if not s:
+            with lock:
+                erros_tcp += 1
+            drones_prontos.wait()
+            return
 
-            while not fim.is_set():
-                cmd = receber_linha(s, timeout=3.0)
-                if cmd is None:
+        # Heartbeat imediato
+        hb_stop = threading.Event()
+        def _hb(sock=s, did=drone_id, stop=hb_stop):
+            while not stop.is_set() and not fim.is_set():
+                try:
+                    enviar(sock, tipo="heartbeat", dispositivo="drone", drone_id=did)
+                except Exception:
                     break
-                if cmd.get("tipo") == "comando" and cmd.get("acao") == "INICIAR_MISSAO":
-                    req_id = cmd.get("req_id", "")
-                    with lock:
-                        missoes_recv.append(req_id)
-                    time.sleep(0.5)  # simula execução brevíssima
-                    try:
-                        enviar(s, tipo="missao_concluida",
-                               drone_id=drone_id, req_id=req_id)
-                    except Exception:
-                        break
+                time.sleep(2)
+        threading.Thread(target=_hb, daemon=True).start()
 
-            hb_stop.set()
+        # Sinaliza pronto e aguarda sensores começarem
+        drones_prontos.wait()
+
+        # Recebe missões
+        buf = ""
+        s.settimeout(1.0)
+        while not fim.is_set():
             try:
-                s.close()
+                chunk = s.recv(1024).decode("utf-8")
+                if not chunk:
+                    break
+                buf += chunk
+                while "\n" in buf:
+                    linha, buf = buf.split("\n", 1)
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    try:
+                        cmd = json.loads(linha)
+                    except Exception:
+                        continue
+                    if cmd.get("tipo") == "comando" and cmd.get("acao") == "INICIAR_MISSAO":
+                        req_id = cmd.get("req_id", "")
+                        with lock:
+                            missoes_recv.append(req_id)
+                        try:
+                            enviar(s, tipo="missao_concluida",
+                                   drone_id=drone_id, req_id=req_id)
+                        except Exception:
+                            break
+            except socket.timeout:
+                continue
             except Exception:
-                pass
+                break
 
-    # — Sensores —
+        hb_stop.set()
+        try:
+            s.close()
+        except Exception:
+            pass
+
     def worker_sensor(sensor_id):
         nonlocal erros_udp
         while not fim.is_set():
             try:
-                # Alterna entre radar crítico e boia
                 if sensor_id % 2 == 0:
                     enviar_udp(host, udp_port,
                                tipo="sensor", dispositivo="boia",
@@ -498,17 +616,25 @@ def teste_carga(host, port, udp_port, duracao=10):
             time.sleep(1.5)
 
     threads = []
+
+    # 1. Inicia os 2 drones
     for i in range(2):
         t = threading.Thread(target=worker_drone,
                              args=(f"carga-drone-{i}",), daemon=True)
         t.start()
         threads.append(t)
 
+    # 2. Espera ambos conectarem e enviarem o primeiro heartbeat
+    drones_prontos.wait()
+    time.sleep(1.0)  # garante que o broker registrou os drones
+
+    # 3. Inicia os 5 sensores
     for i in range(5):
         t = threading.Thread(target=worker_sensor, args=(i,), daemon=True)
         t.start()
         threads.append(t)
 
+    # 4. Deixa rodar pelo tempo de duração
     time.sleep(duracao)
     fim.set()
     for t in threads:
@@ -541,10 +667,6 @@ def teste_carga(host, port, udp_port, duracao=10):
         aviso("Nenhuma missão recebida durante o teste de carga "
               "(verifique se drones conectaram e fila foi processada)")
 
-
-# ──────────────────────────────────────────────
-# Relatório final
-# ──────────────────────────────────────────────
 
 def relatorio():
     total    = len(resultados)
@@ -597,7 +719,6 @@ def main():
     print(f"  {BOLD}{CYAN}╚{'═'*46}╝{RESET}")
     print(f"  {GRAY}Broker: {host}:{port}  UDP: {udp_port}  Carga: {duracao}s{RESET}\n")
 
-    # Verifica conectividade antes de prosseguir
     if not tcp_connect(host, port):
         print(f"  {RED}ERRO: Não foi possível conectar ao broker em {host}:{port}{RESET}")
         print(f"  {YELLOW}Certifique-se de que o broker está rodando antes de executar os testes.{RESET}\n")
@@ -606,11 +727,11 @@ def main():
     teste_tcp_acessivel(host, port)
     teste_handshake_drone(host, port)
     teste_udp_sensores(host, udp_port)
-    teste_reconexao_drone(host, port)
     teste_missao_radar_critico(host, port, udp_port)
     teste_missao_boia_critica(host, port, udp_port)
     teste_sem_duplicidade(host, port, udp_port)
     teste_falha_drone(host, port, udp_port)
+    teste_reconexao_drone(host, port)
     teste_carga(host, port, udp_port, duracao)
 
     sys.exit(relatorio())
